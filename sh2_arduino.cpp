@@ -38,15 +38,12 @@ volatile bool g_sh2_sensorReceived = false;
 volatile bool g_sh2_startedReports = false;
 volatile bool g_sh2_i2cResetNeeded = false;
 
-sh2_SensorPins_t g_sh2_sensorPins;				// Pins struct
-sh2_SensorType_t g_sh2_sensorType;				// Sensor type
-sh2_SensorConfig_t g_sh2_sensorReportConfig;	// Report config struct
-sh2_SensorDMPConfig_t g_sh2_settings_DMP;		// Settings - DMP
-
+sh2_SensorPins_t g_sh2_sensorPins;					// Pins struct
+sh2_SensorType_t g_sh2_sensorType;					// Sensor type
+sh2_SensorConfig_t g_sh2_sensorReportInterruptsConfig;		// Report config struct
+sh2_SensorDMPConfig_t g_sh2_settings_DMP;			// Settings - DMP
 sh2_Quaternion_t g_sh2_settings_sensorOrientation;	// Settings - Sensor Orientation (broken?)
-sh2_SensorDCDConfig_t g_sh2_sensorDCDConfig;	// Settings - DCD
-
-
+sh2_SensorDCDConfig_t g_sh2_sensorDCDConfig;		// Settings - DCD
 
 // ----------------------------------------------------------------------------------
 // State struct
@@ -62,7 +59,6 @@ typedef struct
 } Sh2Hal_t;
 
 Sh2Hal_t g_sh2_Hal;
-
 
 // ----------------------------------------------------------------------------------
 // Forward declarations
@@ -257,15 +253,54 @@ void Hillcrest_ :: math_rotate(sh2_Euler_t euler, sh2_Quaternion_t * quaterinon)
 	quaterinon -> z = (-s1 * s3 + c1 * s2 * c3 +s2) / w4 ;
 }
 	
-
 static void set_orientation_forced(void)
-{
-// 	config0[0] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.x);
-// 	config0[1] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.y);
-// 	config0[2] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.z);
-// 	config0[3] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.w);
-// 		
-// 	int status_pre = sh2_setFrs(SYSTEM_ORIENTATION, &config0[1], ARRAY_LEN(config0));
+{	
+	#define SENSORHUB_FRS_WRITE_REQ 0xF7
+	
+	#define b0(w) ((uint8_t) ((w) & 0xff))
+	#define b1(w) ((uint8_t) ((w) >> 8) & 0xff)
+	#define b2(w) ((uint8_t) ((w) >> 16) & 0xff)
+	#define b3(w) ((uint8_t) ((w) >> 24) & 0xff)
+
+ 	uint32_t x_word = twos_compliment(30, g_sh2_settings_sensorOrientation.x);
+ 	uint32_t y_word = twos_compliment(30, g_sh2_settings_sensorOrientation.y);
+ 	uint32_t z_word = twos_compliment(30, g_sh2_settings_sensorOrientation.z);
+ 	uint32_t w_word = twos_compliment(30, g_sh2_settings_sensorOrientation.w);
+
+	uint8_t reporter[30];
+	
+	reporter[0] = 0;
+	reporter[1] = 2;
+	reporter[3] = 0;
+	reporter[4] = SENSORHUB_FRS_WRITE_REQ;	
+
+	reporter[5] = b0(SYSTEM_ORIENTATION);
+	reporter[6] = b1(SYSTEM_ORIENTATION);
+
+	// indexes wrong...
+	reporter[0] = b0(x_word);
+	reporter[1] = b1(x_word);
+	reporter[2] = b2(x_word);
+	reporter[3] = b3(x_word);
+
+	reporter[4] = b0(y_word);
+	reporter[5] = b1(y_word);
+	reporter[6] = b2(y_word);
+	reporter[7] = b3(y_word);
+	
+	reporter[8] = b0(z_word);
+	reporter[9] = b1(z_word);
+	reporter[10] = b2(z_word);
+	reporter[11] = b3(z_word);
+	
+	reporter[12] = b0(w_word);
+	reporter[13] = b1(w_word);
+	reporter[14] = b2(w_word);
+	reporter[15] = b3(w_word);			
+	
+	//{0,2,0,0xFD,quat_report,0,0,0,B0_rate,B1_rate,0,0,0,0,0,0,0,0,0,0};
+	 				 
+	i2cBlockingTx(g_sh2_Hal.addr, &reporter[0], ARRAY_LEN(reporter));
 }
 
 
@@ -314,25 +349,24 @@ void Hillcrest_:: end(void)
 	pinMode(g_sh2_sensorPins.pin_rstn, INPUT);
 };
 
-void Hillcrest_ :: configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP, sh2_Euler_t sensorOrientation)
+void Hillcrest_ :: configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP/*, sh2_Euler_t sensorOrientation*/)
 {
 	g_sh2_sensorType = sensorType;
 	
-	g_sh2_sensorReportConfig.reportInterval_us			= sensorInts.report_interval_microseconds;
-	g_sh2_sensorReportConfig.alwaysOnEnabled			= sensorInts.enable_always_on;
-	g_sh2_sensorReportConfig.changeSensitivityEnabled	= sensorInts.enable_reports_on_change;
-	g_sh2_sensorReportConfig.changeSensitivityRelative	= sensorInts.enable_change_relativity;
-	g_sh2_sensorReportConfig.changeSensitivity			= sensorInts.change_threshold;
-	g_sh2_sensorReportConfig.wakeupEnabled				= sensorInts.enable_wakeup;
+	g_sh2_sensorReportInterruptsConfig.reportInterval_us			= sensorInts.report_interval_microseconds;
+	g_sh2_sensorReportInterruptsConfig.alwaysOnEnabled			= sensorInts.enable_always_on;
+	g_sh2_sensorReportInterruptsConfig.changeSensitivityEnabled	= sensorInts.enable_reports_on_change;
+	g_sh2_sensorReportInterruptsConfig.changeSensitivityRelative	= sensorInts.enable_change_relativity;
+	g_sh2_sensorReportInterruptsConfig.changeSensitivity			= sensorInts.change_threshold;
+	g_sh2_sensorReportInterruptsConfig.wakeupEnabled				= sensorInts.enable_wakeup;
 	
 	g_sh2_settings_DMP = sensorDMP;
 	
-	//math_rotate(sensorOrientation, &g_sh2_settings_sensorOrientation);
-	
-	g_sh2_settings_sensorOrientation.w = 0;
-	g_sh2_settings_sensorOrientation.x = 0;
-	g_sh2_settings_sensorOrientation.y = 1;
-	g_sh2_settings_sensorOrientation.z = 0;
+//  math_rotate(sensorOrientation, &g_sh2_settings_sensorOrientation);
+// 	g_sh2_settings_sensorOrientation.w = 0;
+// 	g_sh2_settings_sensorOrientation.x = 0;
+// 	g_sh2_settings_sensorOrientation.y = 1;
+// 	g_sh2_settings_sensorOrientation.z = 0;
 	
 	sh2_onReset();
 }
@@ -491,71 +525,6 @@ void Hillcrest_ :: debugValues(sh2_SensorValue_t * values)
 	}
 }
 
-void Hillcrest_ :: integer_math_convert_euler(sh2_Euler_t euler, sh2_Quaternion_2Compliment_t * quaterinon, int8_t q_point)
-{
-	sh2_Euler_t radians;
-	
-	radians.x = euler.x * scaleDegToRad;
-	radians.y = euler.y * scaleDegToRad;
-	radians.z = euler.z * scaleDegToRad;
-	
-	// Assuming the angles are in radians.
-	float c1 = cosf(radians.y);
-	float s1 = sinf(radians.y);
-	
-	float c2 = cosf(radians.z);
-	float s2 = sinf(radians.z);
-	
-	float c3 = cosf(radians.x);
-	float s3 = sinf(radians.x);
-	
-	float real = sqrtf(1.0 + c1 * c2 + c1*c3 - s1 * s2 * s3 + c2*c3) / 2.0;
-	float r4 = real * 4.0;
-	
-	quaterinon -> real = twos_compliment(q_point, real);
-	
-	quaterinon -> i = twos_compliment(q_point, (float)((c2 * s3 + c1 * s3 + s1 * s2 * c3) / r4));
-	quaterinon -> j = twos_compliment(q_point, (float)((s1 * c2 + s1 * c3 + c1 * s2 * s3) / r4));
-	quaterinon -> k = twos_compliment(q_point, (float)((-s1 * s3 + c1 * s2 * c3 + s2) / r4));
-	
-	quaterinon -> q_point = q_point;
-}
-
-void Hillcrest_ :: integer_math_rotate_quaternion(sh2_Quaternion_2Compliment_t rotationVector, sh2_Quaternion_2Compliment_t * quaternion, int8_t q_point)
-{
-	int32_t quaternion_real =
-	((quaternion -> real * rotationVector.real) >> q_point)	-
-	((quaternion -> i * rotationVector.i) >> q_point) -
-	((quaternion -> j * rotationVector.j) >> q_point) -
-	((quaternion -> k * rotationVector.k) >> q_point);  // 1
-	
-	int32_t quaternion_i =
-	((quaternion -> real * rotationVector.i) >> q_point) +
-	((quaternion -> i * rotationVector.real) >> q_point) +
-	((quaternion -> j * rotationVector.k) >> q_point) -
-	((quaternion -> k * rotationVector.j) >> q_point);  // i
-	
-	int32_t quaternion_j =
-	((quaternion -> real * rotationVector.j) >> q_point) -
-	((quaternion -> i * rotationVector.k) >> q_point) +
-	((quaternion -> j * rotationVector.real) >> q_point) +
-	((quaternion -> k * rotationVector.i) >> q_point);  // j
-	
-	int32_t quaternion_k =
-	((quaternion -> real * rotationVector.k) >> q_point) +
-	((quaternion -> i * rotationVector.j) >> q_point) -
-	((quaternion -> j * rotationVector.i) >> q_point) +
-	((quaternion -> k * rotationVector.real) >> q_point);  // k
-	
-	quaternion -> real = quaternion_real;
-	
-	quaternion -> i = quaternion_i;
-	quaternion -> j = quaternion_j;
-	quaternion -> k = quaternion_k;
-	
-	quaternion -> q_point = q_point;
-}
-
 
 // ----------------------------------------------------------------------------------
 // Private
@@ -601,17 +570,17 @@ void Hillcrest_ :: sh2_configure(void)
 	uint32_t config0[4];
 	
 	//SYSTEM_ORIENTATION
-	if(true)
-	{		
-		config0[0] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.x);
-		config0[1] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.y);
-		config0[2] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.z);
-		config0[3] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.w);
-		
-		int status_pre = sh2_setFrs(SYSTEM_ORIENTATION, &config0[1], ARRAY_LEN(config0));
-		
-		status = (status_pre != SH2_OK ? status_pre : status);
-	}
+// 	if(true)
+// 	{		
+// 		config0[0] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.x);
+// 		config0[1] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.y);
+// 		config0[2] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.z);
+// 		config0[3] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.w);
+// 		
+// 		int status_pre = sh2_setFrs(SYSTEM_ORIENTATION, &config0[1], ARRAY_LEN(config0));
+// 		
+// 		status = (status_pre != SH2_OK ? status_pre : status);
+// 	}
 		
 	uint32_t GIRV_CONFIG[7];
 	GIRV_CONFIG[1] = (uint32_t) g_sh2_settings_DMP.SH2_GIRV_SYNC_INTERVAL_US;
@@ -679,7 +648,7 @@ void Hillcrest_ :: sh2_startReports(void)
 			break;
 	}
 	
-	sh2_setSensorConfig(sensorId, &g_sh2_sensorReportConfig);
+	sh2_setSensorConfig(sensorId, &g_sh2_sensorReportInterruptsConfig);
 }
 
 void Hillcrest_ :: sh2_i2cReset(void)

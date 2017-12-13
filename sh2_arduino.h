@@ -114,17 +114,6 @@
 	} sh2_Euler_t;
 
 	// ----------------------------------------------------------------------------------
-	// Handy quaternion integer struct
-	typedef struct
-	{
-		int32_t i;
-		int32_t j; 
-		int32_t k;
-		int32_t real;
-		int8_t q_point;
-	} sh2_Quaternion_2Compliment_t;
-
-	// ----------------------------------------------------------------------------------
 	// Interrupt configuration struct
 	typedef struct
 	{
@@ -163,7 +152,7 @@
 		Hillcrest_(void);
 		int8_t begin(sh2_SensorPins_t setupPins);
 		void end(void);		
-		void configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP, sh2_Euler_t sensorOrientation);
+		void configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP/*, sh2_Euler_t sensorOrientation*/);
 		void startReports(void);
 		bool checkReport(sh2_SensorValue_t * values);		
 		
@@ -174,9 +163,6 @@
 
 		void debugValues(sh2_SensorValue_t * values);	
 		void debugProdIds(void);
-		
-		void integer_math_convert_euler(sh2_Euler_t euler, sh2_Quaternion_2Compliment_t * quaterinon, int8_t q_point);
-		void integer_math_rotate_quaternion(sh2_Quaternion_2Compliment_t rotationVector, sh2_Quaternion_2Compliment_t * quaternion, int8_t q_point);
 	};
 	extern Hillcrest_ Hillcrest;
 

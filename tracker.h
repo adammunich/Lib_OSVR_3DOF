@@ -1,7 +1,7 @@
 /**
 * @file tracker.h
 *
-* @brief 3dof functions _H
+* @brief OSVR 3dof functions _H
 *
 * @copyright
 * This library is free software; you can redistribute it and/or
@@ -24,11 +24,37 @@
 	#define _OSVR_3DOF_H_
 
 	#include <Arduino.h>
+	#include "../Lib_Arduino_Default/HID/HID.h"
 
+	#if !defined(_USING_HID)
+		#error "Arduino variant does not have HID support"
+	#endif
+	
 	// Math
 	#define twosCompliment(q, f) ((int32_t)(f * (float)(1 << q)))
 	#define degreesToRadiansTwosComplimentQ14(f) (int32_t)((285.954745) * f)
 	#define deciDegreesToRadiansTwosComplimentQ14(f) (int32_t)((28.5954745) * f)
+	#define degressToRadiansScalar ((float) 0.0174532925)
+
+	// ----------------------------------------------------------------------------------
+	// Handy quaternion integer struct
+	typedef struct
+	{
+		int32_t i;
+		int32_t j;
+		int32_t k;
+		int32_t real;
+		int8_t q_point;
+	} osvr_tracker_integer_quaternion_t;
+
+	// ----------------------------------------------------------------------------------
+	// Handy euler angles struct
+	typedef struct
+	{
+		float x = 0;
+		float y = 0;
+		float z = 0;
+	} osvr_tracker_float_euler_t;	
 
 	//  Low level key report: up to 6 keys and shift, ctrl etc at once
 	typedef struct
@@ -53,6 +79,12 @@
 
 	class Tracker_
 	{
+		private:
+		TrackerReport osvr_tracker_hid_report;
+		void sendHIDReport(TrackerReport* report);
+		void integer_math_convert_euler(osvr_tracker_float_euler_t euler, osvr_tracker_integer_quaternion_t * quaterinon, int8_t q_point);
+		void integer_math_rotate_quaternion(osvr_tracker_integer_quaternion_t rotationVector, osvr_tracker_integer_quaternion_t * quaternion, int8_t q_point);
+		
 		public:
 		Tracker_(void);
 		uint8_t begin(void);
@@ -60,5 +92,11 @@
 		size_t update(void);		
 	};
 	extern Tracker_ osvr_tracker;	
-
+		
+	extern uint8_t g_osvr_tracker_use_magnetometer;
+	extern uint8_t g_osvr_tracker_tare_now;
+	extern uint8_t g_osvr_tracker_save_dcd_now;
+	extern uint8_t g_osvr_tracker_enable_dcd_now;
+	extern uint8_t g_osvr_tracker_clear_dcd_now;
+		
 #endif
