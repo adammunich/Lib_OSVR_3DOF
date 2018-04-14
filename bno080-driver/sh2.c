@@ -1444,8 +1444,10 @@ static void setFrsRx(const uint8_t *payload, uint16_t len)
 	int rc = SH2_OK;
 
 	// skip this if it isn't the response we're looking for.
-	if (resp->reportId != SENSORHUB_FRS_WRITE_RESP) return;
-
+	if (resp->reportId != SENSORHUB_FRS_WRITE_RESP) {
+		return;
+	}
+	
 	// Check for errors: Unrecognized FRS type, Busy, Out of range, Device error
 	status = resp->status;
 	switch(status) {

@@ -1,13 +1,13 @@
 /**
 * @file 3dof_functions.cpp
 *
-* @brief OSVR 3dof functions
+* @brief OSVR 3DOF Functions
 *
 * @copyright
 * This library is free software; you can redistribute it and/or
-* modify it under the terms of the GNU Lesser General Public
+* modify it under the terms of the GNU General Public
 * License as published by the Free Software Foundation; either
-* version 2.1 of the License, or (at your option) any later version.
+* version 3.0 of the License, or (at your option) any later version.
 *
 * @copyright
 * Unless required by applicable law or agreed to in writing, software
@@ -20,7 +20,11 @@
 * @author Adam Munich
 */
 
-#include "./tracker.h"
+
+//#define OPTION_MEASURE_PERIOD
+#define OPTION_SEND_OVER_CDC
+
+#include "./osvr_3dof.h"
 #include "./sh2_arduino.h"
 #include "../pin_settings.h"
 
@@ -35,20 +39,22 @@
 // Sensor object
 Hillcrest_ g_hillcrest;
 
+sh2_SensorType_t g_osvr_tracker_sensor_type;
+
 // Constants
-const uint8_t g_osvr_tracker_hid_report_length = sizeof(TrackerReport);
+const uint8_t g_osvr_tracker_hid_report_length = sizeof(vrpnTrackerReport);
 
 // Event flags	
-uint8_t g_osvr_tracker_use_magnetometer = 0;
-uint8_t g_osvr_tracker_tare_now = 0;
-uint8_t g_osvr_tracker_save_dcd_now = 0;
-uint8_t g_osvr_tracker_enable_dcd_now = 0;
-uint8_t g_osvr_tracker_clear_dcd_now = 0;
+uint8_t g_vrpn_tracker_use_magnetometer = 0;
+uint8_t g_vrpn_tracker_tare_now = 0;
+uint8_t g_vrpn_tracker_save_dcd_now = 0;
+uint8_t g_vrpn_tracker_enable_dcd_now = 0;
+uint8_t g_vrpn_tracker_clear_dcd_now = 0;
 uint8_t g_osvr_tracker_measure_frequency_now = 0;
 
 // Sensor orientation
-osvr_tracker_integer_quaternion_t g_osvr_tracker_sensor_rotation;
-osvr_tracker_float_euler_t g_osvr_tracker_rotation_euler;
+vrpnTracker_int_quaternion_t g_osvr_tracker_sensor_rotation;
+vrpnTracker_float_euler_t g_osvr_tracker_rotation_euler;
 
 // Sensor report values
 sh2_SensorValue_t g_osvr_tracker_sensor_values;
@@ -97,69 +103,106 @@ static const uint8_t _hidReportDescriptor[] PROGMEM =
 	// 53 bytes
 };
 						 	
-Tracker_::Tracker_(void)
+vrpnTracker_::vrpnTracker_(void)
 {
 	static HIDSubDescriptor node(_hidReportDescriptor, sizeof(_hidReportDescriptor));
 	HID().AppendDescriptor(&node);
 }
 
-uint8_t Tracker_ :: begin(void)
+uint8_t vrpnTracker_ :: begin(uint32_t pin_rstn, uint32_t pin_bootn, uint32_t pin_intn)
 {
 	osvr_tracker_hid_report.vrpn_message_sequence_number = 0;
 	
 	// Sensor pins
 	sh2_SensorPins_t osvr_tracker_sensor_pins;
-	osvr_tracker_sensor_pins.pin_rstn = PIN_osvr_tracker_rstn;
-	osvr_tracker_sensor_pins.pin_bootn = PIN_osvr_tracker_bootn;
-	osvr_tracker_sensor_pins.pin_intn = PIN_osvr_tracker_intn;
+	osvr_tracker_sensor_pins.pin_rstn = pin_rstn;
+	osvr_tracker_sensor_pins.pin_bootn = pin_bootn;
+	osvr_tracker_sensor_pins.pin_intn = pin_intn;
 		
+	g_hillcrest.begin(osvr_tracker_sensor_pins);		
+}
+
+void vrpnTracker_ :: setup(vrpnTracker_sensorType_t sensor_type, uint16_t reportInterval_us, float prediction_amount_s, float euler_x, float euler_y, float euler_z)
+{
 	// Sensor type
-	sh2_SensorType_t osvr_tracker_sensor_type = SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG;
+	// @TODO could pobably done with memcpy or pointers or something...
+	switch(sensor_type)
+	{
+		case vrpnTracker_sensorType::FILTERED_GRAVITY_REFERENCED_ORIENTATION:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_AR_VR_STABILIZED_GAME_ROTATION_VECTOR;
+			break;
+		}
+		case vrpnTracker_sensorType::FILTERED_ORIENTATION:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_AR_VR_STABILIZED_ROTATION_VECTOR;		
+			break;
+		}
+		case vrpnTracker_sensorType::SIMPLE_GRAVITY_REFERENCED_ORIENTATION:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_GAME_ROTATION_VECTOR;
+			break;
+		}
+		case vrpnTracker_sensorType::SIMPLE_GEOMAGNETIC_REFERENCED_ORIENTATION:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_GEOMAGNETIC_ROTATION_VECTOR;
+			break;
+		}
+		case vrpnTracker_sensorType::SENSOR_FUSION_NO_MAGNETOMETER:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG;
+			break;
+		}
+		case vrpnTracker_sensorType::SENSOR_FUSION_WITH_MAGNETOMETER:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG;
+			break;
+		}
+		case vrpnTracker_sensorType::SIMPLE_ORIENTATION:
+		{
+			g_osvr_tracker_sensor_type = sh2_sensorType::SH2_TYPE_ROTATION_VECTOR;
+			break;
+		}
+	}
 	
 	// Interrupt config
 	sh2_SensorInterrupts_t osvr_tracker_sensor_ints;
-	osvr_tracker_sensor_ints.report_interval_microseconds = 1500;
-	
+	osvr_tracker_sensor_ints.report_interval_microseconds = reportInterval_us;
+
 	// DMP config
 	sh2_SensorDMPConfig_t osvr_tracker_sensor_dmp;
 	osvr_tracker_sensor_dmp.GIRV_PRED_AMT_S = 0.002;
-	
-	// Orientation config
-	/* BROKEN */
-// 	sh2_Euler_t sensorOrientation;
-// 	sensorOrientation.x = 0;
-// 	sensorOrientation.y = 0;
-// 	sensorOrientation.z = 0;
-		
-	g_hillcrest.begin(osvr_tracker_sensor_pins);		
-	g_hillcrest.configure(osvr_tracker_sensor_type, osvr_tracker_sensor_ints, osvr_tracker_sensor_dmp/*, sensorOrientation*/);
-		
-	/* HOTFIX */
-	// Calculate rotation vector...					
-	g_osvr_tracker_rotation_euler.x = -90;
-	g_osvr_tracker_rotation_euler.y = 0;
-	g_osvr_tracker_rotation_euler.z = 0;
-		
-	integer_math_convert_euler(g_osvr_tracker_rotation_euler, &g_osvr_tracker_sensor_rotation, 14);
+
+	// Broken 
+	sh2_Euler_t sensorOrientation;
+
+	// Write config to sensor
+	g_hillcrest.configure(g_osvr_tracker_sensor_type, osvr_tracker_sensor_ints, osvr_tracker_sensor_dmp, sensorOrientation);
+
+	// Calculate and set rotation vector...
+	g_osvr_tracker_rotation_euler.x = euler_x;
+	g_osvr_tracker_rotation_euler.y = euler_y;
+	g_osvr_tracker_rotation_euler.z = euler_z;
+	integer_math_convert_euler(g_osvr_tracker_rotation_euler, &g_osvr_tracker_sensor_rotation, 14);	
 }
 
-void Tracker_ :: end(void)
+void vrpnTracker_ :: end(void)
 {
 	Hillcrest.end();
 }
 						
-size_t Tracker_ :: update(void)
-{												
+size_t vrpnTracker_ :: loopTask(void)
+{						
 	uint8_t osvr_tracker_sensor_event = g_hillcrest.checkReport(&g_osvr_tracker_sensor_values);
 		
 	if(osvr_tracker_sensor_event){			
-		osvr_tracker_integer_quaternion_t sensor_vector;
+		vrpnTracker_int_quaternion_t sensor_vector;
 			
 		sensor_vector.q_point = 14;
-		sensor_vector.real = twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.real);
-		sensor_vector.i	= twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.i);
-		sensor_vector.j = twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.j);
-		sensor_vector.k = twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.k);
+		sensor_vector.real = vrpn_twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.real);
+		sensor_vector.i	= vrpn_twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.i);
+		sensor_vector.j = vrpn_twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.j);
+		sensor_vector.k = vrpn_twosCompliment(14, g_osvr_tracker_sensor_values.un.gameRotationVector.k);
 			
 		integer_math_rotate_quaternion(g_osvr_tracker_sensor_rotation, &sensor_vector, 14);
 			
@@ -168,9 +211,9 @@ size_t Tracker_ :: update(void)
 		int16_t quat_j_q = sensor_vector.j;
 		int16_t quat_k_q = sensor_vector.k;			 
 								
-		int16_t ang_vel_x = deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelX);
-		int16_t ang_vel_y = deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelY);
-		int16_t ang_vel_z = deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelZ);
+		int16_t ang_vel_x = vrpn_deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelX);
+		int16_t ang_vel_y = vrpn_deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelY);
+		int16_t ang_vel_z = vrpn_deciDegreesToRadiansTwosComplimentQ14(g_osvr_tracker_sensor_values.un.gyroIntegratedRV.angVelZ);
 				
 		osvr_tracker_hid_report.vrpn_report_version					= 0x02;
 		osvr_tracker_hid_report.vrpn_message_sequence_number++;
@@ -192,9 +235,21 @@ size_t Tracker_ :: update(void)
 	
 		sendHIDReport(&osvr_tracker_hid_report);
 		
-		#define MEASURE_PERIOD
+		/* IMU Serial USB */
+		#ifdef OPTION_SEND_OVER_CDC
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_message_sequence_number);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_i_lsb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_i_msb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_j_lsb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_j_msb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_k_lsb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_k_msb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_real_lsb);
+		SerialUSB.write(osvr_tracker_hid_report.vrpn_quaternion_real_msb);
+		SerialUSB.print("\r\n");		
+		#endif
 		
-		#ifdef MEASURE_PERIOD
+		#ifdef OPTION_MEASURE_PERIOD
 			uint32_t osvr_tracker_report_now = micros();		
 			uint32_t osvr_tracker_report_period = osvr_tracker_report_now - g_osvr_tracker_report_last;
 			g_osvr_tracker_report_last = osvr_tracker_report_now;
@@ -208,29 +263,29 @@ size_t Tracker_ :: update(void)
 		#endif
 	}
 	
-	if(g_osvr_tracker_tare_now)
+	if(g_vrpn_tracker_tare_now)
 	{
 		sh2_TareBasis_t basis = SH2_TARE_BASIS_ROTATION_VECTOR;
 		g_hillcrest.tare(true, true, true, basis, false);
-		g_osvr_tracker_tare_now = false;
+		g_vrpn_tracker_tare_now = false;
 	}
 	
-	else if(g_osvr_tracker_save_dcd_now)
+	else if(g_vrpn_tracker_save_dcd_now)
 	{
 		g_hillcrest.saveDCD();
-		g_osvr_tracker_save_dcd_now = false;
+		g_vrpn_tracker_save_dcd_now = false;
 	}
 	
-	else if(g_osvr_tracker_enable_dcd_now)
+	else if(g_vrpn_tracker_enable_dcd_now)
 	{
 		g_hillcrest.setDCD(true, true, true);
-		g_osvr_tracker_enable_dcd_now = false;
+		g_vrpn_tracker_enable_dcd_now = false;
 	}
 	
-	else if(g_osvr_tracker_clear_dcd_now)
+	else if(g_vrpn_tracker_clear_dcd_now)
 	{
 		g_hillcrest.clearDCD();
-		g_osvr_tracker_clear_dcd_now = false;
+		g_vrpn_tracker_clear_dcd_now = false;
 	}	
 		
 	return osvr_tracker_sensor_event;
@@ -239,19 +294,19 @@ size_t Tracker_ :: update(void)
 
 // ----------------------------------------------------------------------------------
 // Private
-void Tracker_ :: sendHIDReport(TrackerReport* report)
+void vrpnTracker_ :: sendHIDReport(vrpnTrackerReport* report)
 {
 	// Endpoint 0x04
 	USBDevice.send(0x04, report, g_osvr_tracker_hid_report_length);
 }
 
-void Tracker_ :: integer_math_convert_euler(osvr_tracker_float_euler_t euler, osvr_tracker_integer_quaternion_t * quaterinon, int8_t q_point)
+void vrpnTracker_ :: integer_math_convert_euler(vrpnTracker_float_euler_t euler, vrpnTracker_int_quaternion_t * quaterinon, int8_t q_point)
 {
-	osvr_tracker_float_euler_t radians;
+	vrpnTracker_float_euler_t radians;
 	
-	radians.x = euler.x * degressToRadiansScalar;
-	radians.y = euler.y * degressToRadiansScalar;
-	radians.z = euler.z * degressToRadiansScalar;
+	radians.x = euler.x * vrpn_degressToRadiansScalar;
+	radians.y = euler.y * vrpn_degressToRadiansScalar;
+	radians.z = euler.z * vrpn_degressToRadiansScalar;
 	
 	// Assuming the angles are in radians.
 	float c1 = cosf(radians.y);
@@ -266,16 +321,16 @@ void Tracker_ :: integer_math_convert_euler(osvr_tracker_float_euler_t euler, os
 	float real = sqrtf(1.0 + c1 * c2 + c1*c3 - s1 * s2 * s3 + c2*c3) / 2.0;
 	float r4 = real * 4.0;
 	
-	quaterinon -> real = twosCompliment(q_point, real);
+	quaterinon -> real = vrpn_twosCompliment(q_point, real);
 	
-	quaterinon -> i = twosCompliment(q_point, (float)((c2 * s3 + c1 * s3 + s1 * s2 * c3) / r4));
-	quaterinon -> j = twosCompliment(q_point, (float)((s1 * c2 + s1 * c3 + c1 * s2 * s3) / r4));
-	quaterinon -> k = twosCompliment(q_point, (float)((-s1 * s3 + c1 * s2 * c3 + s2) / r4));
+	quaterinon -> i = vrpn_twosCompliment(q_point, (float)((c2 * s3 + c1 * s3 + s1 * s2 * c3) / r4));
+	quaterinon -> j = vrpn_twosCompliment(q_point, (float)((s1 * c2 + s1 * c3 + c1 * s2 * s3) / r4));
+	quaterinon -> k = vrpn_twosCompliment(q_point, (float)((-s1 * s3 + c1 * s2 * c3 + s2) / r4));
 	
 	quaterinon -> q_point = q_point;
 }
 
-void Tracker_ :: integer_math_rotate_quaternion(osvr_tracker_integer_quaternion_t rotationVector, osvr_tracker_integer_quaternion_t * quaternion, int8_t q_point)
+void vrpnTracker_ :: integer_math_rotate_quaternion(vrpnTracker_int_quaternion_t rotationVector, vrpnTracker_int_quaternion_t * quaternion, int8_t q_point)
 {
 	int32_t quaternion_real =
 	((quaternion -> real * rotationVector.real) >> q_point)	-
@@ -312,4 +367,4 @@ void Tracker_ :: integer_math_rotate_quaternion(osvr_tracker_integer_quaternion_
 
 
 	
-Tracker_ osvr_tracker;
+vrpnTracker_ vrpn_tracker;

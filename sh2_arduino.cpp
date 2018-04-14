@@ -4,7 +4,10 @@
 * @brief Hillcrest Sensorhub Arduino Library
 *
 * @copyright
-* Apache 2.0
+* This library is free software; you can redistribute it and/or
+* modify it under the terms of the GNU General Public
+* License as published by the Free Software Foundation; either
+* version 3.0 of the License, or (at your option) any later version.
 *
 * @copyright
 * Unless required by applicable law or agreed to in writing, software
@@ -56,6 +59,7 @@ typedef struct
 	uint16_t addr;
 	uint8_t rxBuf[64]; // CHECK_ADAM
 	uint16_t rxRemaining;
+	bool blockSem;
 } Sh2Hal_t;
 
 Sh2Hal_t g_sh2_Hal;
@@ -74,6 +78,8 @@ static void bootn0(bool state);
 static int i2cBlockingRx(unsigned addr, uint8_t* pData, unsigned len);
 static int i2cBlockingTx(unsigned addr, uint8_t* pData, unsigned len);
 
+void sh2_halTask(void);
+
 
 // ----------------------------------------------------------------------------------
 // Callbacks and Handlers 
@@ -86,7 +92,8 @@ static void INTN_IRQ()
 
 static void eventHandler(void * cookie, sh2_AsyncEvent_t *pEvent)
 {
-	if (pEvent->eventId == SH2_RESET) {
+	if (pEvent->eventId == SH2_RESET)
+	{
 		g_sh2_resetPerformed = true;
 	}
 }
@@ -113,7 +120,8 @@ int i2cBlockingTx(unsigned addr, uint8_t* pData, unsigned len)
 	
 	Wire.beginTransmission(addr);
 		
-	for(uint8_t i = 0; i < len; i++){
+	for(uint8_t i = 0; i < len; i++)
+	{
 		uint8_t databyte = (uint8_t)(pData[i]);
 		volatile uint8_t success = Wire.write(databyte);
 	}
@@ -163,7 +171,8 @@ int i2cBlockingRx(unsigned addr, uint8_t *pData, unsigned len)
 int sh2_hal_tx(uint8_t *pData, uint32_t len)
 {
 	// Do nothing if len is zero
-	if (len == 0) {
+	if (len == 0)
+	{
 		return SH2_OK;
 	}
 
@@ -174,7 +183,8 @@ int sh2_hal_tx(uint8_t *pData, uint32_t len)
 int sh2_hal_rx(uint8_t *pData, uint32_t len)
 {
 	// Do nothing if len is zero
-	if (len == 0) {
+	if (len == 0)
+	{
 		return SH2_OK;
 	}
 
@@ -182,11 +192,21 @@ int sh2_hal_rx(uint8_t *pData, uint32_t len)
 	return i2cBlockingRx(g_sh2_Hal.addr, pData, len);
 }
 
-int sh2_hal_block(void){
+int sh2_hal_block(void)
+{	
+	int counts = 1000;
+	while(g_sh2_Hal.blockSem && counts >= 1)
+	{
+		sh2_halTask();
+		counts --;
+	}
+	g_sh2_Hal.blockSem = true;
 	return SH2_OK;
 };
 
-int sh2_hal_unblock(void){
+int sh2_hal_unblock(void)
+{
+	g_sh2_Hal.blockSem = false;
 	return SH2_OK;
 }
 
@@ -252,56 +272,6 @@ void Hillcrest_ :: math_rotate(sh2_Euler_t euler, sh2_Quaternion_t * quaterinon)
 	quaterinon -> y = (s1 * c2 + s1 * c3 + c1 * s2 * s3) / w4 ;
 	quaterinon -> z = (-s1 * s3 + c1 * s2 * c3 +s2) / w4 ;
 }
-	
-static void set_orientation_forced(void)
-{	
-	#define SENSORHUB_FRS_WRITE_REQ 0xF7
-	
-	#define b0(w) ((uint8_t) ((w) & 0xff))
-	#define b1(w) ((uint8_t) ((w) >> 8) & 0xff)
-	#define b2(w) ((uint8_t) ((w) >> 16) & 0xff)
-	#define b3(w) ((uint8_t) ((w) >> 24) & 0xff)
-
- 	uint32_t x_word = twos_compliment(30, g_sh2_settings_sensorOrientation.x);
- 	uint32_t y_word = twos_compliment(30, g_sh2_settings_sensorOrientation.y);
- 	uint32_t z_word = twos_compliment(30, g_sh2_settings_sensorOrientation.z);
- 	uint32_t w_word = twos_compliment(30, g_sh2_settings_sensorOrientation.w);
-
-	uint8_t reporter[30];
-	
-	reporter[0] = 0;
-	reporter[1] = 2;
-	reporter[3] = 0;
-	reporter[4] = SENSORHUB_FRS_WRITE_REQ;	
-
-	reporter[5] = b0(SYSTEM_ORIENTATION);
-	reporter[6] = b1(SYSTEM_ORIENTATION);
-
-	// indexes wrong...
-	reporter[0] = b0(x_word);
-	reporter[1] = b1(x_word);
-	reporter[2] = b2(x_word);
-	reporter[3] = b3(x_word);
-
-	reporter[4] = b0(y_word);
-	reporter[5] = b1(y_word);
-	reporter[6] = b2(y_word);
-	reporter[7] = b3(y_word);
-	
-	reporter[8] = b0(z_word);
-	reporter[9] = b1(z_word);
-	reporter[10] = b2(z_word);
-	reporter[11] = b3(z_word);
-	
-	reporter[12] = b0(w_word);
-	reporter[13] = b1(w_word);
-	reporter[14] = b2(w_word);
-	reporter[15] = b3(w_word);			
-	
-	//{0,2,0,0xFD,quat_report,0,0,0,B0_rate,B1_rate,0,0,0,0,0,0,0,0,0,0};
-	 				 
-	i2cBlockingTx(g_sh2_Hal.addr, &reporter[0], ARRAY_LEN(reporter));
-}
 
 
 // ----------------------------------------------------------------------------------
@@ -349,24 +319,24 @@ void Hillcrest_:: end(void)
 	pinMode(g_sh2_sensorPins.pin_rstn, INPUT);
 };
 
-void Hillcrest_ :: configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP/*, sh2_Euler_t sensorOrientation*/)
+void Hillcrest_ :: configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP, sh2_Euler_t sensorOrientation)
 {
 	g_sh2_sensorType = sensorType;
 	
 	g_sh2_sensorReportInterruptsConfig.reportInterval_us			= sensorInts.report_interval_microseconds;
-	g_sh2_sensorReportInterruptsConfig.alwaysOnEnabled			= sensorInts.enable_always_on;
-	g_sh2_sensorReportInterruptsConfig.changeSensitivityEnabled	= sensorInts.enable_reports_on_change;
+	g_sh2_sensorReportInterruptsConfig.alwaysOnEnabled				= sensorInts.enable_always_on;
+	g_sh2_sensorReportInterruptsConfig.changeSensitivityEnabled		= sensorInts.enable_reports_on_change;
 	g_sh2_sensorReportInterruptsConfig.changeSensitivityRelative	= sensorInts.enable_change_relativity;
 	g_sh2_sensorReportInterruptsConfig.changeSensitivity			= sensorInts.change_threshold;
 	g_sh2_sensorReportInterruptsConfig.wakeupEnabled				= sensorInts.enable_wakeup;
 	
 	g_sh2_settings_DMP = sensorDMP;
 	
-//  math_rotate(sensorOrientation, &g_sh2_settings_sensorOrientation);
-// 	g_sh2_settings_sensorOrientation.w = 0;
-// 	g_sh2_settings_sensorOrientation.x = 0;
-// 	g_sh2_settings_sensorOrientation.y = 1;
-// 	g_sh2_settings_sensorOrientation.z = 0;
+//		math_rotate(sensorOrientation, &g_sh2_settings_sensorOrientation);
+//		g_sh2_settings_sensorOrientation.w = 0;
+//  	g_sh2_settings_sensorOrientation.x = 0;
+//  	g_sh2_settings_sensorOrientation.y = 1;
+//  	g_sh2_settings_sensorOrientation.z = 0;
 	
 	sh2_onReset();
 }
@@ -376,7 +346,8 @@ void Hillcrest_ :: startReports(void)
 	sh2_startReports();	
 }
 
-bool Hillcrest_ :: checkReport(sh2_SensorValue_t * values){
+bool Hillcrest_ :: checkReport(sh2_SensorValue_t * values)
+{
 	sh2_halTask();
 	
 	uint8_t sh2_state_changed = false;
@@ -444,17 +415,26 @@ void Hillcrest_ :: debugProdIds(void)
 	
 	//sh2_halTask();
 	
-	if (status < 0) {
-		serial_out.printf("Error from sh2_getProdIds.\n");
+	if (status < 0)
+	{
+		serial_out.print("Error from sh2_getProdIds.\n");
 		return;
 	}
 
 	// Report the results
-	for (int n = 0; n < SH2_NUM_PROD_ID_ENTRIES; n++) {
-		serial_out.printf("Part %d : Version %d.%d.%d Build %d\n",
-		sh2_product_ids.entry[n].swPartNumber,
-		sh2_product_ids.entry[n].swVersionMajor, sh2_product_ids.entry[n].swVersionMinor,
-		sh2_product_ids.entry[n].swVersionPatch, sh2_product_ids.entry[n].swBuildNumber);
+	for (int n = 0; n < SH2_NUM_PROD_ID_ENTRIES; n++)
+	{
+		serial_out.print("Part ");
+		serial_out.print(sh2_product_ids.entry[n].swPartNumber);
+		serial_out.print(" : Version ");
+		serial_out.print(sh2_product_ids.entry[n].swVersionMajor);
+		serial_out.print(".");
+		serial_out.print(sh2_product_ids.entry[n].swVersionMinor);
+		serial_out.print(".");
+		serial_out.print(sh2_product_ids.entry[n].swVersionPatch);
+		serial_out.print(" Build ");
+		serial_out.print(sh2_product_ids.entry[n].swBuildNumber);
+		serial_out.print("\n");
 	}
 }
 
@@ -462,66 +442,77 @@ void Hillcrest_ :: debugValues(sh2_SensorValue_t * values)
 {
 	float t = values -> timestamp / 1000000.0;
 	
-	switch (values -> sensorId) {
+	switch (values -> sensorId)
+	{
 		case SH2_RAW_ACCELEROMETER:
-		serial_out.print("Raw ACC | ");
-		serial_out.print(values -> un.rawAccelerometer.x);
-		serial_out.print("x | ");
-		serial_out.print(values -> un.rawAccelerometer.y);
-		serial_out.print("y | ");
-		serial_out.print(values -> un.rawAccelerometer.z);
-		serial_out.println("z");
-		break;
-
+		{
+			serial_out.print("Raw ACC | ");
+			serial_out.print(values -> un.rawAccelerometer.x);
+			serial_out.print("x | ");
+			serial_out.print(values -> un.rawAccelerometer.y);
+			serial_out.print("y | ");
+			serial_out.print(values -> un.rawAccelerometer.z);
+			serial_out.println("z");
+			break;
+		}
+	
 		case SH2_ACCELEROMETER:
-		serial_out.print("ACC | ");
-		serial_out.print(values -> un.accelerometer.x, 3);
-		serial_out.print("x | ");
-		serial_out.print(values -> un.accelerometer.y, 3);
-		serial_out.print("y | ");
-		serial_out.print(values -> un.accelerometer.z, 3);
-		serial_out.println("z");
-		break;
-
+		{
+			serial_out.print("ACC | ");
+			serial_out.print(values -> un.accelerometer.x, 3);
+			serial_out.print("x | ");
+			serial_out.print(values -> un.accelerometer.y, 3);
+			serial_out.print("y | ");
+			serial_out.print(values -> un.accelerometer.z, 3);
+			serial_out.println("z");
+			break;
+		}
+		
 		case SH2_ROTATION_VECTOR:
-		serial_out.print("RV | ");
-		serial_out.print(values -> un.rotationVector.real, 3);
-		serial_out.print("r | ");
-		serial_out.print(values -> un.rotationVector.i, 3);
-		serial_out.print("i | ");
-		serial_out.print(values -> un.rotationVector.j, 3);
-		serial_out.print("j | ");
-		serial_out.print(values -> un.rotationVector.k, 3);
-		serial_out.print("k | accuracy: ");
-		serial_out.print(values -> un.rotationVector.accuracy, 3);
-		serial_out.print("rad | t: ");
-		serial_out.print(t);
-		serial_out.println("s");
-		break;
+		{
+			serial_out.print("RV | ");
+			serial_out.print(values -> un.rotationVector.real, 3);
+			serial_out.print("r | ");
+			serial_out.print(values -> un.rotationVector.i, 3);
+			serial_out.print("i | ");
+			serial_out.print(values -> un.rotationVector.j, 3);
+			serial_out.print("j | ");
+			serial_out.print(values -> un.rotationVector.k, 3);
+			serial_out.print("k | accuracy: ");
+			serial_out.print(values -> un.rotationVector.accuracy, 3);
+			serial_out.print("rad | t: ");
+			serial_out.print(t);
+			serial_out.println("s");
+			break;
+		}
 		
 		case SH2_GYRO_INTEGRATED_RV:
-		serial_out.print("GIRV | ");
-		serial_out.print(values -> un.gyroIntegratedRV.real, 3);
-		serial_out.print("r | ");
-		serial_out.print(values -> un.gyroIntegratedRV.i, 3);
-		serial_out.print("i | ");
-		serial_out.print(values -> un.gyroIntegratedRV.j, 3);
-		serial_out.print("j | ");
-		serial_out.print(values -> un.gyroIntegratedRV.k, 3);
-		serial_out.print("k | ");
-		serial_out.print(values -> un.gyroIntegratedRV.angVelX, 3);
-		serial_out.print("x | ");
-		serial_out.print(values -> un.gyroIntegratedRV.angVelY, 3);
-		serial_out.print("y | ");
-		serial_out.print(values -> un.gyroIntegratedRV.angVelZ, 3);
-		serial_out.print("z | t: ");
-		serial_out.print(t, 4);
-		serial_out.println("s");
-		break;
-		
+		{
+			serial_out.print("GIRV | ");
+			serial_out.print(values -> un.gyroIntegratedRV.real, 3);
+			serial_out.print("r | ");
+			serial_out.print(values -> un.gyroIntegratedRV.i, 3);
+			serial_out.print("i | ");
+			serial_out.print(values -> un.gyroIntegratedRV.j, 3);
+			serial_out.print("j | ");
+			serial_out.print(values -> un.gyroIntegratedRV.k, 3);
+			serial_out.print("k | ");
+			serial_out.print(values -> un.gyroIntegratedRV.angVelX, 3);
+			serial_out.print("x | ");
+			serial_out.print(values -> un.gyroIntegratedRV.angVelY, 3);
+			serial_out.print("y | ");
+			serial_out.print(values -> un.gyroIntegratedRV.angVelZ, 3);
+			serial_out.print("z | t: ");
+			serial_out.print(t, 4);
+			serial_out.println("s");
+			break;
+		}
 		default:
-		serial_out.printf("Unknown sensor: %d\n", values -> sensorId);
-		break;
+		{
+			serial_out.print("Unknown sensor:");
+			serial_out.println(values -> sensorId);
+	  		break;			
+		}
 	}
 }
 
@@ -542,6 +533,8 @@ void Hillcrest_ :: sh2_hal_init(void)
 	// Put SH2 device in reset
 	g_sh2_Hal.rstn(false);  // Hold in reset
 	g_sh2_Hal.bootn(true);  // SH-2, not DFU
+	
+    g_sh2_Hal.blockSem = false;
 };
 
 void Hillcrest_ :: sh2_onReset(void)
@@ -565,22 +558,19 @@ void Hillcrest_ :: sh2_parseEvent(const sh2_SensorEvent_t * event, sh2_SensorVal
 
 void Hillcrest_ :: sh2_configure(void)
 {
-	int status = SH2_OK;
-
-	uint32_t config0[4];
-	
+	int8_t status = SH2_OK;
+	int8_t status_pre;
+		
 	//SYSTEM_ORIENTATION
-// 	if(true)
-// 	{		
-// 		config0[0] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.x);
-// 		config0[1] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.y);
-// 		config0[2] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.z);
-// 		config0[3] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.w);
+	// BROKEN
+//	uint32_t config0[4];
+// 	config0[0] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.x);
+// 	config0[1] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.y);
+// 	config0[2] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.z);
+// 	config0[3] = (uint32_t) twos_compliment(30, g_sh2_settings_sensorOrientation.w);
 // 		
-// 		int status_pre = sh2_setFrs(SYSTEM_ORIENTATION, &config0[1], ARRAY_LEN(config0));
-// 		
-// 		status = (status_pre != SH2_OK ? status_pre : status);
-// 	}
+// 	int status_pre = sh2_setFrs(SYSTEM_ORIENTATION, &config0[1], ARRAY_LEN(config0));		
+// 	status = (status_pre != SH2_OK ? status_pre : status);
 		
 	uint32_t GIRV_CONFIG[7];
 	GIRV_CONFIG[1] = (uint32_t) g_sh2_settings_DMP.SH2_GIRV_SYNC_INTERVAL_US;
@@ -592,17 +582,20 @@ void Hillcrest_ :: sh2_configure(void)
 
 	switch(g_sh2_sensorType)
 	{
-		case SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG:
-		case SH2_TYPE_AR_VR_STABILIZED_ROTATION_VECTOR:
+		case sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG:
+		case sh2_sensorType::SH2_TYPE_AR_VR_STABILIZED_ROTATION_VECTOR:
+		{
 			GIRV_CONFIG[0] = (uint32_t) 0x204;
 			break;
+		}
 		default:
+		{
 			GIRV_CONFIG[0] = (uint32_t) 0x207;
 			break;			
+		}
 	}
-
-	int status_pre = sh2_setFrs(GYRO_INTEGRATED_RV_CONFIG, &GIRV_CONFIG[0], ARRAY_LEN(GIRV_CONFIG));
-		
+	
+	status_pre = sh2_setFrs(GYRO_INTEGRATED_RV_CONFIG, &GIRV_CONFIG[0], ARRAY_LEN(GIRV_CONFIG));
 	status = (status_pre != SH2_OK ? status_pre : status);		
 	
 	// Enable dynamic calibration for A, G and M sensors
@@ -624,28 +617,42 @@ void Hillcrest_ :: sh2_startReports(void)
 
 	switch(g_sh2_sensorType)
 	{
-		case SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG:
-		case SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG:
+		case sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG:
+		case sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG:
+		{
 			sensorId = SH2_GYRO_INTEGRATED_RV;
 			break;
-		case SH2_TYPE_ROTATION_VECTOR:
+		}
+		case sh2_sensorType::SH2_TYPE_ROTATION_VECTOR:
+		{
 			sensorId = SH2_ROTATION_VECTOR;
 			break;
-		case SH2_TYPE_GAME_ROTATION_VECTOR:
+		}
+		case sh2_sensorType::SH2_TYPE_GAME_ROTATION_VECTOR:
+		{
 			sensorId = SH2_GAME_ROTATION_VECTOR;
 			break;
-		case SH2_TYPE_GEOMAGNETIC_ROTATION_VECTOR:
+		}
+		case sh2_sensorType::SH2_TYPE_GEOMAGNETIC_ROTATION_VECTOR:
+		{
 			sensorId = SH2_GEOMAGNETIC_ROTATION_VECTOR;
 			break;
-		case SH2_TYPE_AR_VR_STABILIZED_ROTATION_VECTOR:
+		}
+		case sh2_sensorType::SH2_TYPE_AR_VR_STABILIZED_ROTATION_VECTOR:
+		{
 			sensorId = SH2_ARVR_STABILIZED_RV;
 			break;
-		case SH2_TYPE_AR_VR_STABILIZED_GAME_ROTATION_VECTOR:
+		}
+		case sh2_sensorType::SH2_TYPE_AR_VR_STABILIZED_GAME_ROTATION_VECTOR:
+		{
 			sensorId = SH2_ARVR_STABILIZED_GRV;
 			break;
+		}
 		default:
-			SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG;
+		{
+			sh2_sensorType::SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG;
 			break;
+		}
 	}
 	
 	sh2_setSensorConfig(sensorId, &g_sh2_sensorReportInterruptsConfig);
@@ -657,7 +664,7 @@ void Hillcrest_ :: sh2_i2cReset(void)
 	g_sh2_i2cResetNeeded = false;
 }
 
-void Hillcrest_ :: sh2_halTask(void)
+void sh2_halTask(void)
 {
 	//Event_t event;
 	unsigned readLen = 0;
@@ -666,6 +673,7 @@ void Hillcrest_ :: sh2_halTask(void)
 	// Handle the event
 	switch (g_sh2_imu_event.id) {
 		case EVT_INTN:
+		{
 			g_sh2_imu_event.id = EVT_NONE;
 			
 			// If no RX callback registered, don't bother trying to read
@@ -702,11 +710,13 @@ void Hillcrest_ :: sh2_halTask(void)
 				// Deliver via onRx callback
 				g_sh2_Hal.onRx(g_sh2_Hal.onRxCookie, g_sh2_Hal.rxBuf, readLen, g_sh2_imu_event.t_ms * 1000);
 			}
-
 			break;
+		}
 		default:
+		{
 			// Unknown event type.  Ignore.
 			break;
+		}
 	}
 }
 

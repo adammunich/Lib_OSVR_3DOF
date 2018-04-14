@@ -4,7 +4,10 @@
 * @brief Hillcrest Sensorhub Arduino Library _H
 *
 * @copyright
-* Apache 2.0
+* This library is free software; you can redistribute it and/or
+* modify it under the terms of the GNU General Public
+* License as published by the Free Software Foundation; either
+* version 3.0 of the License, or (at your option) any later version.
 *
 * @copyright
 * Unless required by applicable law or agreed to in writing, software
@@ -66,7 +69,7 @@
 
 	// ----------------------------------------------------------------------------------
 	// Sensor types
-	typedef enum
+	typedef enum class sh2_sensorType
 	{
 		SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_NO_MAG,
 		SH2_TYPE_GYRO_INTEGRATED_ROTATION_VECTOR_WITH_MAG,
@@ -144,7 +147,6 @@
 		void sh2_onReset(void);
 		void sh2_configure(void);
 		void sh2_startReports(void);
-		void sh2_halTask(void);
 		void sh2_parseEvent(const sh2_SensorEvent_t * event, sh2_SensorValue_t * values);
 		void math_rotate(sh2_Euler_t euler, sh2_Quaternion_t * quaterinon);
 		
@@ -152,7 +154,7 @@
 		Hillcrest_(void);
 		int8_t begin(sh2_SensorPins_t setupPins);
 		void end(void);		
-		void configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP/*, sh2_Euler_t sensorOrientation*/);
+		void configure(sh2_SensorType_t sensorType, sh2_SensorInterrupts_t sensorInts, sh2_SensorDMPConfig_t sensorDMP, sh2_Euler_t sensorOrientation);
 		void startReports(void);
 		bool checkReport(sh2_SensorValue_t * values);		
 		
